@@ -412,17 +412,60 @@ fileInput.addEventListener('change', () => { handleFiles(fileInput.files); fileI
 function handleFiles(files) {
   [...files].forEach(f => {
     if (!f.name.endsWith('.csv')) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      const parsed = parseCSV(e.target.result, f.name);
-      if (parsed) {
-        state.files.push(parsed);
-        renderFileList();
-      }
-    };
-    // Try multiple encodings
-    reader.readAsText(f, 'UTF-8');
+    readWithAutoEncoding(f);
   });
+}
+
+function readWithAutoEncoding(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    // Check for mojibake: common garbled patterns when Shift-JIS is read as UTF-8
+    if (hasMojibake(text)) {
+      // Re-read as Shift-JIS
+      const reader2 = new FileReader();
+      reader2.onload = e2 => {
+        const text2 = e2.target.result;
+        if (hasMojibake(text2)) {
+          // Try EUC-JP as last resort
+          const reader3 = new FileReader();
+          reader3.onload = e3 => {
+            addParsedFile(e3.target.result, file.name);
+          };
+          reader3.readAsText(file, 'EUC-JP');
+        } else {
+          addParsedFile(text2, file.name);
+        }
+      };
+      reader2.readAsText(file, 'Shift_JIS');
+    } else {
+      addParsedFile(text, file.name);
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function hasMojibake(text) {
+  // Check first 2000 chars for common mojibake indicators
+  const sample = text.substring(0, 2000);
+  // U+FFFD = replacement character (failed decode)
+  if ((sample.match(/\uFFFD/g) || []).length > 2) return true;
+  // Common garbled patterns when Shift-JIS is decoded as UTF-8
+  if (/[\u00C0-\u00FF]{3,}/.test(sample)) return true;
+  // Consecutive half-width katakana-like sequences that shouldn't appear
+  if (/[\u0080-\u009F]{2,}/.test(sample)) return true;
+  // Check ratio of unusual characters
+  const unusual = (sample.match(/[\u0080-\u00FF\uFFFD]/g) || []).length;
+  if (unusual > sample.length * 0.05) return true;
+  return false;
+}
+
+function addParsedFile(text, fileName) {
+  const parsed = parseCSV(text, fileName);
+  if (parsed) {
+    state.files.push(parsed);
+    renderFileList();
+  }
 }
 
 function parseCSV(text, fileName) {
