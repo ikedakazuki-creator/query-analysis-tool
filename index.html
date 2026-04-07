@@ -491,11 +491,22 @@ function parseCSV(text, fileName) {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return null;
 
-  // Detect separator
-  const sep = lines[0].includes('\t') ? '\t' : ',';
-  const headers = parseLine(lines[0], sep);
+  // Find header row: skip metadata/title rows at the top
+  // Header row is the first line that contains known column keywords
+  const headerKeywords = /検索語句|検索クエリー|検索クエリ|search.?term|search.?query|キーワード|インプレッション|impression|表示回数|クリック|click/i;
+  let headerIndex = 0;
+  for (let i = 0; i < Math.min(lines.length, 10); i++) {
+    if (headerKeywords.test(lines[i])) {
+      headerIndex = i;
+      break;
+    }
+  }
+
+  // Detect separator from header line
+  const sep = lines[headerIndex].includes('\t') ? '\t' : ',';
+  const headers = parseLine(lines[headerIndex], sep);
   const rows = [];
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = headerIndex + 1; i < lines.length; i++) {
     const cols = parseLine(lines[i], sep);
     if (cols.length >= 2) rows.push(cols);
   }
