@@ -492,11 +492,13 @@ function parseCSV(text, fileName) {
   if (lines.length < 2) return null;
 
   // Find header row: skip metadata/title rows at the top
-  // Header row is the first line that contains known column keywords
-  const headerKeywords = /検索語句|検索クエリー|検索クエリ|search.?term|search.?query|キーワード|インプレッション|impression|表示回数|クリック|click/i;
+  // Header row must contain multiple columns (tab or comma separated) AND known keywords
+  const headerKeywords = /検索語句|検索クエリー|検索クエリ|search.?term|search.?query/i;
+  const metricKeywords = /インプレッション|impression|表示回数|クリック|click|費用|cost/i;
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 10); i++) {
-    if (headerKeywords.test(lines[i])) {
+    const hasSep = lines[i].includes('\t') || lines[i].includes(',');
+    if (hasSep && headerKeywords.test(lines[i]) && metricKeywords.test(lines[i])) {
       headerIndex = i;
       break;
     }
