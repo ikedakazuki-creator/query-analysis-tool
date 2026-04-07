@@ -77,6 +77,23 @@
     font-size: 18px; padding: 4px 8px;
   }
 
+  .rule-upload-zone {
+    border: 2px dashed #c0c8d4;
+    border-radius: 10px;
+    padding: 24px;
+    text-align: center;
+    background: #f8f9fa;
+    transition: all .2s;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+  .rule-upload-zone:hover, .rule-upload-zone.dragover {
+    border-color: #1a73e8;
+    background: #e8f0fe;
+  }
+  .rule-upload-zone p { font-size: 14px; color: #555; }
+  .rule-upload-zone .sub { font-size: 11px; color: #999; margin-top: 6px; }
+
   .platform-badge {
     display: inline-block;
     padding: 2px 10px;
@@ -314,6 +331,18 @@
 
   <!-- Panel 2: Exclusion Settings -->
   <div class="panel" id="panel-settings">
+    <div class="settings-card">
+      <h3>除外ルールファイル（任意）</h3>
+      <label>既存の除外ルールファイル（CSV/TSV/テキスト）があればアップロードしてください。内容が自動で反映されます。</label>
+      <div class="rule-upload-zone" id="ruleDropZone">
+        <div style="font-size:28px;margin-bottom:8px">📋</div>
+        <p>除外ルールファイルをドラッグ&ドロップ、またはクリック</p>
+        <div class="sub">対応形式: CSV / TSV / TXT（1行1ワード、または広告グループ名+NGワードの2列構成）</div>
+        <input type="file" id="ruleFileInput" multiple accept=".csv,.tsv,.txt" style="display:none">
+      </div>
+      <div id="ruleFileList" class="file-list"></div>
+    </div>
+
     <div class="settings-card">
       <h3>共通NGワード</h3>
       <label>除外したいキーワードを1行に1つずつ入力してください</label>
@@ -603,6 +632,123 @@ document.getElementById('btnProceed').addEventListener('click', () => {
   document.getElementById('tab-settings').classList.remove('disabled');
   switchTab('settings');
 });
+
+// ========== Rule File Upload ==========
+const ruleDropZone = document.getElementById('ruleDropZone');
+const ruleFileInput = document.getElementById('ruleFileInput');
+const ruleFileList = document.getElementById('ruleFileList');
+const ruleFiles = []; // track uploaded rule file names
+
+ruleDropZone.addEventListener('click', () => ruleFileInput.click());
+ruleDropZone.addEventListener('dragover', e => { e.preventDefault(); ruleDropZone.classList.add('dragover'); });
+ruleDropZone.addEventListener('dragleave', () => ruleDropZone.classList.remove('dragover'));
+ruleDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  ruleDropZone.classList.remove('dragover');
+  handleRuleFiles(e.dataTransfer.files);
+});
+ruleFileInput.addEventListener('change', () => { handleRuleFiles(ruleFileInput.files); ruleFileInput.value = ''; });
+
+function handleRuleFiles(files) {
+  [...files].forEach(f => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      // Try reading with auto encoding
+      let text = e.target.result;
+      parseRuleFile(text, f.name, f);
+    };
+    // First try as ArrayBuffer to detect BOM
+    const bomReader = new FileReader();
+    bomReader.onload = ev => {
+      const arr = new Uint8Array(ev.target.result);
+      if (arr[0] === 0xFF && arr[1] === 0xFE) {
+        const r = new FileReader();
+        r.onload = e2 => parseRuleFile(e2.target.result, f.name);
+        r.readAsText(f, 'UTF-16LE');
+      } else if (arr[0] === 0xFE && arr[1] === 0xFF) {
+        const r = new FileReader();
+        r.onload = e2 => parseRuleFile(e2.target.result, f.name);
+        r.readAsText(f, 'UTF-16BE');
+      } else {
+        const r = new FileReader();
+        r.onload = e2 => {
+          const text = e2.target.result;
+          if (hasMojibake(text)) {
+            const r2 = new FileReader();
+            r2.onload = e3 => parseRuleFile(e3.target.result, f.name);
+            r2.readAsText(f, 'Shift_JIS');
+          } else {
+            parseRuleFile(text, f.name);
+          }
+        };
+        r.readAsText(f, 'UTF-8');
+      }
+    };
+    bomReader.readAsArrayBuffer(f.slice(0, 4));
+  });
+}
+
+function parseRuleFile(text, fileName) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return;
+
+  const sep = lines[0].includes('\t') ? '\t' : lines[0].includes(',') ? ',' : null;
+  const commonNg = [];
+  const adgRulesMap = {}; // adgName -> [words]
+
+  for (const line of lines) {
+    if (!sep) {
+      // Single column: treat each line as a common NG word
+      commonNg.push(line.trim());
+      continue;
+    }
+    const cols = parseLine(line, sep);
+    if (cols.length === 1 && cols[0].trim()) {
+      commonNg.push(cols[0].trim());
+    } else if (cols.length >= 2) {
+      const adgName = cols[0].trim();
+      const word = cols[1].trim();
+      if (!adgName && word) {
+        commonNg.push(word);
+      } else if (adgName && word) {
+        if (!adgRulesMap[adgName]) adgRulesMap[adgName] = [];
+        adgRulesMap[adgName].push(word);
+      }
+    }
+  }
+
+  // Append to NG words textarea
+  const ngTextarea = document.getElementById('ngWords');
+  if (commonNg.length) {
+    const existing = ngTextarea.value.trim();
+    ngTextarea.value = existing ? existing + '\n' + commonNg.join('\n') : commonNg.join('\n');
+  }
+
+  // Append ADG rules
+  for (const [adgName, words] of Object.entries(adgRulesMap)) {
+    addAdgRow();
+    const rows = document.querySelectorAll('.adg-row');
+    const lastRow = rows[rows.length - 1];
+    lastRow.querySelector('.adg-name').value = adgName;
+    lastRow.querySelector('.adg-words').value = words.join('\n');
+  }
+
+  // Track file and render list
+  ruleFiles.push({ name: fileName, ngCount: commonNg.length, adgCount: Object.keys(adgRulesMap).length });
+  renderRuleFileList();
+}
+
+function renderRuleFileList() {
+  ruleFileList.innerHTML = ruleFiles.map((f, i) => `
+    <div class="file-item">
+      <div>
+        <span class="name">${f.name}</span>
+        <span class="meta">（共通NG: ${f.ngCount}件, ADGルール: ${f.adgCount}グループ）</span>
+      </div>
+    </div>
+  `).join('');
+}
 
 // ========== Exclusion Settings ==========
 const adgContainer = document.getElementById('adgContainer');
