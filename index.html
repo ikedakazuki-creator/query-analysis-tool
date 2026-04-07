@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>広告クエリ精査ツール</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Segoe UI', 'Meiryo', sans-serif; background: #f0f2f5; color: #333; }
@@ -318,9 +319,9 @@
   <div class="panel active" id="panel-upload">
     <div class="upload-zone" id="dropZone">
       <div class="icon">📁</div>
-      <p>CSVファイルをドラッグ&ドロップ、またはクリックしてアップロード</p>
-      <div class="sub">Google広告 / Yahoo広告 / Microsoft広告 の検索クエリレポートCSV対応</div>
-      <input type="file" id="fileInput" multiple accept=".csv" style="display:none">
+      <p>CSV / Excelファイルをドラッグ&ドロップ、またはクリックしてアップロード</p>
+      <div class="sub">Google広告 / Yahoo広告 / Microsoft広告 の検索クエリレポート（CSV・Excel）対応</div>
+      <input type="file" id="fileInput" multiple accept=".csv,.xlsx,.xls" style="display:none">
     </div>
     <div class="file-list" id="fileList"></div>
     <div class="btn-row" id="uploadActions" style="display:none">
@@ -333,12 +334,12 @@
   <div class="panel" id="panel-settings">
     <div class="settings-card">
       <h3>除外ルールファイル（任意）</h3>
-      <label>既存の除外ルールファイル（CSV/TSV/テキスト）があればアップロードしてください。内容が自動で反映されます。</label>
+      <label>既存の除外ルールファイル（CSV/TSV/テキスト/Excel）があればアップロードしてください。内容が自動で反映されます。</label>
       <div class="rule-upload-zone" id="ruleDropZone">
         <div style="font-size:28px;margin-bottom:8px">📋</div>
         <p>除外ルールファイルをドラッグ&ドロップ、またはクリック</p>
-        <div class="sub">対応形式: CSV / TSV / TXT（1行1ワード、または広告グループ名+NGワードの2列構成）</div>
-        <input type="file" id="ruleFileInput" multiple accept=".csv,.tsv,.txt" style="display:none">
+        <div class="sub">対応形式: CSV / TSV / TXT / Excel（1行1ワード、または広告グループ名+NGワードの2列構成）</div>
+        <input type="file" id="ruleFileInput" multiple accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none">
       </div>
       <div id="ruleFileList" class="file-list"></div>
     </div>
@@ -440,9 +441,26 @@ fileInput.addEventListener('change', () => { handleFiles(fileInput.files); fileI
 
 function handleFiles(files) {
   [...files].forEach(f => {
-    if (!f.name.endsWith('.csv')) return;
-    readWithAutoEncoding(f);
+    const ext = f.name.toLowerCase().split('.').pop();
+    if (ext === 'xlsx' || ext === 'xls') {
+      readExcelFile(f);
+    } else if (ext === 'csv') {
+      readWithAutoEncoding(f);
+    }
   });
+}
+
+function readExcelFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const data = new Uint8Array(e.target.result);
+    const workbook = XLSX.read(data, { type: 'array' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const csvText = XLSX.utils.sheet_to_csv(sheet, { FS: '\t' });
+    addParsedFile(csvText, file.name);
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 function readWithAutoEncoding(file) {
@@ -651,13 +669,20 @@ ruleFileInput.addEventListener('change', () => { handleRuleFiles(ruleFileInput.f
 
 function handleRuleFiles(files) {
   [...files].forEach(f => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      // Try reading with auto encoding
-      let text = e.target.result;
-      parseRuleFile(text, f.name, f);
-    };
-    // First try as ArrayBuffer to detect BOM
+    const ext = f.name.toLowerCase().split('.').pop();
+    if (ext === 'xlsx' || ext === 'xls') {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const csvText = XLSX.utils.sheet_to_csv(sheet, { FS: '\t' });
+        parseRuleFile(csvText, f.name);
+      };
+      reader.readAsArrayBuffer(f);
+      return;
+    }
+    // CSV/TSV/TXT: auto-detect encoding
     const bomReader = new FileReader();
     bomReader.onload = ev => {
       const arr = new Uint8Array(ev.target.result);
