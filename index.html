@@ -417,32 +417,48 @@ function handleFiles(files) {
 }
 
 function readWithAutoEncoding(file) {
-  const reader = new FileReader();
-  reader.onload = e => {
-    const text = e.target.result;
-    // Check for mojibake: common garbled patterns when Shift-JIS is read as UTF-8
-    if (hasMojibake(text)) {
-      // Re-read as Shift-JIS
-      const reader2 = new FileReader();
-      reader2.onload = e2 => {
-        const text2 = e2.target.result;
-        if (hasMojibake(text2)) {
-          // Try EUC-JP as last resort
-          const reader3 = new FileReader();
-          reader3.onload = e3 => {
-            addParsedFile(e3.target.result, file.name);
-          };
-          reader3.readAsText(file, 'EUC-JP');
-        } else {
-          addParsedFile(text2, file.name);
-        }
-      };
-      reader2.readAsText(file, 'Shift_JIS');
-    } else {
-      addParsedFile(text, file.name);
+  // First, check BOM by reading raw bytes
+  const bomReader = new FileReader();
+  bomReader.onload = e => {
+    const arr = new Uint8Array(e.target.result);
+    // UTF-16 LE BOM: FF FE
+    if (arr[0] === 0xFF && arr[1] === 0xFE) {
+      const reader = new FileReader();
+      reader.onload = ev => addParsedFile(ev.target.result, file.name);
+      reader.readAsText(file, 'UTF-16LE');
+      return;
     }
+    // UTF-16 BE BOM: FE FF
+    if (arr[0] === 0xFE && arr[1] === 0xFF) {
+      const reader = new FileReader();
+      reader.onload = ev => addParsedFile(ev.target.result, file.name);
+      reader.readAsText(file, 'UTF-16BE');
+      return;
+    }
+    // Otherwise try UTF-8 → Shift-JIS → EUC-JP
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const text = ev.target.result;
+      if (hasMojibake(text)) {
+        const reader2 = new FileReader();
+        reader2.onload = e2 => {
+          const text2 = e2.target.result;
+          if (hasMojibake(text2)) {
+            const reader3 = new FileReader();
+            reader3.onload = e3 => addParsedFile(e3.target.result, file.name);
+            reader3.readAsText(file, 'EUC-JP');
+          } else {
+            addParsedFile(text2, file.name);
+          }
+        };
+        reader2.readAsText(file, 'Shift_JIS');
+      } else {
+        addParsedFile(text, file.name);
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
   };
-  reader.readAsText(file, 'UTF-8');
+  bomReader.readAsArrayBuffer(file.slice(0, 4));
 }
 
 function hasMojibake(text) {
